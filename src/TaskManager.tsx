@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, ChangeEvent, useRef } from 'react';
 import { supabase } from './SupabaseClient';
 import { Task } from './Task';
 import { Session } from '@supabase/supabase-js';
@@ -9,20 +9,48 @@ export function TaskManager({session} : {session: Session}) {
     const [editTaskData, setEditTaskData] = useState({
         id: null,
         title: '',
-        description: '',
+        description: ''
     });
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const [taskImage, setTaskImage] = useState<File | null>(null);
 
     const isEditMode = editTaskData.id !== null && editTaskData.id !== undefined;
 
+    const uploadImage = async (file: File ) : Promise<string | null> => {
+        const filePath =  `private/${file.name}-${Date.now()}`;
+        const {error} = await supabase.storage.from('tasks').upload(filePath, file);
+
+        if (error) {
+            console.error("Error Uploading Image:", error.message);
+            return null;
+        }
+
+        const {data} = await supabase.storage.from('tasks').getPublicUrl(filePath);
+        return data.publicUrl;
+    }
+    const clearFile = () => {
+        setTaskImage(null);
+        if (fileInputRef.current) {
+            fileInputRef.current.value = "";
+        }
+    };
+
     const handleSubmit = async (e) => {
         e.preventDefault();
-        const { error, data } = await supabase.from('tasks').insert({...newTask, email: session.user.email}).single();
+
+        let imageUrl: string | null = null;
+        if (taskImage) {
+            imageUrl = await uploadImage(taskImage);
+        }
+
+        const { error, data } = await supabase.from('tasks').insert({...newTask, email: session.user.email, image_url: imageUrl}).single();
         if (error) {
             console.error("Error Adding Task:", error.message);
             return;
         }
         console.log("Task added:", newTask);
         setNewTask({ title: "", description: "" });
+        clearFile();
         // fetchTasks();
     };
 
@@ -44,15 +72,21 @@ export function TaskManager({session} : {session: Session}) {
     };
 
     const updateTask = async () => {
+        let imageUrl: string | null = null;
+        if (taskImage) {
+            imageUrl = await uploadImage(taskImage);
+        }
+
         const { error } = await supabase
             .from('tasks')
-            .update({ title: editTaskData.title, description: editTaskData.description })
+            .update({ title: editTaskData.title, description: editTaskData.description, image_url: imageUrl})
             .eq("id", editTaskData.id);
         if (error) {
             console.error('Update error:', error.message);
         } else {
             setNewTask({ title: "", description: "" });
             setEditTaskData({ id: null, title: '', description: '' });
+            clearFile();
             fetchTasks();
         }
     };
@@ -92,6 +126,12 @@ export function TaskManager({session} : {session: Session}) {
             supabase.removeChannel(channel);
         };
     }, []);
+
+    const handleFile = async (e: ChangeEvent<HTMLFormElement>) => {
+        if (e.target.files && e.target.files.length > 0) {
+            setTaskImage(e.target.files[0])
+        }
+    };
 
     return (
         <>
@@ -133,6 +173,13 @@ export function TaskManager({session} : {session: Session}) {
                                             }
                                         ></textarea>
                                     </div>
+                                    <div className="mb-3">
+                                        <label htmlFor="File" className="form-label d-flex">File</label>
+                                        <input type="file" className="form-control" accept="image/*" 
+                                        ref={fileInputRef}
+                                        onChange={handleFile}
+                                        />
+                                    </div>
                                     <div className="mb-3 d-flex">
                                         {isEditMode ? (
                                             <>
@@ -155,6 +202,7 @@ export function TaskManager({session} : {session: Session}) {
                             <thead>
                                 <tr>
                                     <th>No</th>
+                                    <th>Image</th>
                                     <th>Title</th>
                                     <th>Desc</th>
                                     <th>Action</th>
@@ -164,6 +212,7 @@ export function TaskManager({session} : {session: Session}) {
                                 {tasks.map((task, index) => (
                                     <tr key={task.id}>
                                         <td>{index + 1}</td>
+                                        <td><img src={task.image_url} alt="" height="50px" width="50px" className="img-thumbnail"/></td>
                                         <td>{task.title}</td>
                                         <td>{task.description}</td>
                                         <td>
